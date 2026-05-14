@@ -107,36 +107,39 @@ resource "google_compute_security_policy" "cloud_armor_policy" {
 }
 
 # -----------------------------------------------------------------------------
-# 3. FRONTEND STATIC HOSTING & CDN
+# -----------------------------------------------------------------------------
+# 3. FRONTEND CLOUD RUN SERVICE
 # -----------------------------------------------------------------------------
 
-resource "random_id" "bucket_suffix" {
-  byte_length = 4
-}
+resource "google_cloud_run_v2_service" "frontend" {
+  name     = "evms-frontend"
+  location = var.region
+  project  = var.project_id
+  ingress  = "INGRESS_TRAFFIC_ALL"
 
-resource "google_storage_bucket" "frontend_bucket" {
-  name          = "evms-frontend-${random_id.bucket_suffix.hex}"
-  location      = "US"
-  project       = var.project_id
-  force_destroy = true
-
-  uniform_bucket_level_access = true
-
-  website {
-    main_page_suffix = "index.html"
-    not_found_page   = "index.html"
+  template {
+    containers {
+      # Placeholder image used for initial infrastructure provisioning.
+      # The actual React container will be deployed over this using gcloud.
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
+      ports {
+        container_port = 8080
+      }
+    }
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 5
+    }
+    service_account = data.google_compute_default_service_account.default.email
   }
 }
 
-# Make the bucket public (read-only) so CDN can serve it 
-# (The WAF will restrict actual access)
-# NOTE: Removed allUsers binding because "Domain Restricted Sharing" Organization 
-# Policies in FedRAMP/DoD IL4 environments typically block public IAM roles.
-# To deploy the CDN, you will need an Identity-Aware Proxy (IAP) or Signed URLs.
-
-# Note: Fully provisioning an External HTTP(S) Load Balancer for Cloud CDN and Cloud Armor 
-# requires a registered domain, managed SSL certificates, and multiple routing components 
-# (backend buckets, url maps, target proxies, forwarding rules).
-# Those resources are complex and require DNS validation to work correctly.
-# For now, we will stop at the Bucket and WAF Policy definition, as they represent
-# the necessary backend infrastructure for CMMC compliance.
+# Allow public access to the Frontend (Cloud Run handles the SSL and domain,
+# and Firebase handles the application-level authentication).
+resource "google_cloud_run_service_iam_member" "frontend_public" {
+  location = google_cloud_run_v2_service.frontend.location
+  project  = google_cloud_run_v2_service.frontend.project
+  service  = google_cloud_run_v2_service.frontend.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}

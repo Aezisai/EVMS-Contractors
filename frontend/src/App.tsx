@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, updatePassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, updatePassword, updateProfile } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { DashboardSummary } from './DashboardSummary';
 import { SCurveChart } from './SCurveChart';
@@ -22,12 +22,12 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  
+
   // States for forced password change
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  
+
   // Tutorial State
   const [runTutorial, setRunTutorial] = useState(false);
 
@@ -35,9 +35,9 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Check if this is the first login on this device
-        const hasCompletedFirstLogin = localStorage.getItem(`has_completed_first_login_${currentUser.uid}`);
-        if (!hasCompletedFirstLogin) {
+        // Check if this is the first login by reading the Firebase profile
+        // We use photoURL as a secure, cross-device database flag
+        if (currentUser.photoURL !== 'password_changed') {
           setNeedsPasswordChange(true);
         } else {
           setNeedsPasswordChange(false);
@@ -84,11 +84,11 @@ function App() {
       alert("Password must be at least 8 characters long.");
       return;
     }
-    
+
     try {
       await updatePassword(user, newPassword);
-      // Mark first login as complete
-      localStorage.setItem(`has_completed_first_login_${user.uid}`, 'true');
+      // Mark first login as complete permanently on the Firebase server
+      await updateProfile(user, { photoURL: 'password_changed' });
       setNeedsPasswordChange(false);
       alert("Password updated successfully!");
     } catch (error: any) {
@@ -106,8 +106,8 @@ function App() {
     if (!user) return;
     try {
       const token = await user.getIdToken();
-      // The URL here would be the API Gateway endpoint deployed by Terraform
-      const response = await fetch('https://evms-gateway-xxx.uc.gateway.dev/api/v1/engine/calculate', {
+      const gatewayUrl = import.meta.env.VITE_API_GATEWAY_URL || 'https://evms-gateway-3hgz1uo4.uk.gateway.dev';
+      const response = await fetch(`${gatewayUrl}/api/v1/engine/calculate`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -149,28 +149,15 @@ function App() {
           <button type="submit" className="btn btn-primary">
             Secure Login
           </button>
-          
-          <button 
-            type="button" 
+
+          <button
+            type="button"
             onClick={handleResetPassword}
             style={{ background: 'none', border: 'none', color: 'var(--primary-color)', textDecoration: 'underline', cursor: 'pointer', fontSize: '0.9rem', padding: '5px' }}
           >
             Forgot Password?
           </button>
 
-          <hr style={{ margin: '1rem 0', width: '100%', borderTop: '1px solid #cbd5e1' }} />
-
-          <button
-            type="button"
-            className="btn"
-            style={{ backgroundColor: 'var(--success-color)', color: 'white' }}
-            onClick={() => {
-              setUser({ email: 'demo_admin@evms.local', uid: 'demo-123', getIdToken: async () => 'mock-jwt-token' } as any);
-              setNeedsPasswordChange(true); // Mocking a first-time login
-            }}
-          >
-            Bypass Login (Dev Mode)
-          </button>
         </form>
       </div>
     );
@@ -225,11 +212,11 @@ function App() {
           <button onClick={handleLogout} className="btn" style={{ backgroundColor: '#cbd5e1', color: '#333' }}>Logout</button>
         </div>
       </header>
-      
+
       <main>
         <Tutorial run={runTutorial} onFinish={() => setRunTutorial(false)} />
         <DashboardSummary />
-        
+
         <div className="dashboard-grid">
           <SCurveChart />
           <IPMRReport />
